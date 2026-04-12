@@ -1,0 +1,58 @@
+# Eventora stack: MongoDB + API + static frontend
+# Practices: non-root images, healthchecks, no secrets in compose (use .env file)
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Compose project `.env` supplies JWT_SECRET / email; MONGO_URI targets the compose network
+      MONGO_URI: mongodb://mongo:27017/eventora
+      JWT_SECRET: ${JWT_SECRET:-docker-dev-only-change-me}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      DNS_SERVERS: ${DNS_SERVERS:-}
+      USE_SYSTEM_DNS: ${USE_SYSTEM_DNS:-}
+    ports:
+      - "5000:5000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - internal
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:5000/api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    networks:
+      - internal
+
+volumes:
+  mongo_data:
+
+networks:
+  internal:
+    driver: bridge

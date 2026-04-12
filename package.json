@@ -16,7 +16,9 @@
     "lint": "npm run lint --prefix client",
     "setup": "npm run install:all",
     "dev:all": "npm run install:all && npm run dev",
-    "start:all": "npm run install:all && npm run start"
+    "start:all": "npm run install:all && npm run start",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
     "concurrently": "^9.0.1"

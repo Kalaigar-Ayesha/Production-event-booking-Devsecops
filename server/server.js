@@ -38,6 +38,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Liveness for orchestrators / Docker HEALTHCHECK (no DB dependency)
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);

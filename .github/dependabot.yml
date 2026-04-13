@@ -1,11 +1,18 @@
 version: 2
 updates:
-  # Root package.json (if you use it)
+  # Root package.json (optional)
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      root-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Avoid noisy/breaking major upgrades in automated PRs
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Server dependencies
   - package-ecosystem: "npm"
@@ -13,6 +20,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      server-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Client dependencies
   - package-ecosystem: "npm"
@@ -20,10 +33,29 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      client-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
-  # Docker updates (Dockerfiles + base images)
+  # Docker-compose image tags in `docker-compose.yml`
   - package-ecosystem: "docker"
     directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # Dockerfiles live in subfolders; scan them explicitly
+  - package-ecosystem: "docker"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "docker"
+    directory: "/server"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10

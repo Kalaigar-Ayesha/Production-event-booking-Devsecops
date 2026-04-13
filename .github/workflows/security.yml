@@ -1,0 +1,146 @@
+## yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Security (SAST + Deps + Secrets)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  build_test:
+    name: Build + Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            Eventora-MERN/package-lock.json
+            Eventora-MERN/server/package-lock.json
+            Eventora-MERN/client/package-lock.json
+
+      - name: Install root deps (if lockfile exists)
+        working-directory: Eventora-MERN
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Install server deps
+        working-directory: Eventora-MERN/server
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Server tests (if present)
+        working-directory: Eventora-MERN/server
+        run: npm test --if-present
+
+      - name: Install client deps
+        working-directory: Eventora-MERN/client
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Client lint (if present)
+        working-directory: Eventora-MERN/client
+        run: npm run lint --if-present
+
+      - name: Client build (if present)
+        working-directory: Eventora-MERN/client
+        run: npm run build --if-present
+
+  codeql:
+    name: CodeQL (SAST)
+    runs-on: ubuntu-latest
+    needs: build_test
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ "javascript-typescript" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      # JS/TS typically doesn't need a build step for CodeQL.
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  trivy:
+    name: Trivy (Vulns + IaC)
+    runs-on: ubuntu-latest
+    needs: build_test
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scans repo for:
+      # - OS/package vulns where lockfiles exist (npm)
+      # - IaC misconfigurations (Dockerfile, docker-compose)
+      # - hardcoded secrets (built-in secret rules)
+      - name: Trivy filesystem scan (gate)
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
+          format: table
+          exit-code: "1"
+
+      - name: Trivy filesystem scan (SARIF for GitHub Security)
+        if: always()
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Upload Trivy results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+
+  gitleaks:
+    name: Gitleaks (Secrets)
+    runs-on: ubuntu-latest
+    needs: build_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

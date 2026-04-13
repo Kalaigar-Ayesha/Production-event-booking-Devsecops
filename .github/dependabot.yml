@@ -1,25 +1,29 @@
 version: 2
 updates:
+  # Root package.json (if you use it)
   - package-ecosystem: "npm"
-    directory: "/Eventora-MERN"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
 
+  # Server dependencies
   - package-ecosystem: "npm"
-    directory: "/Eventora-MERN/server"
+    directory: "/server"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
 
+  # Client dependencies
   - package-ecosystem: "npm"
-    directory: "/Eventora-MERN/client"
+    directory: "/client"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
 
+  # Docker updates (Dockerfiles + base images)
   - package-ecosystem: "docker"
-    directory: "/Eventora-MERN"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10

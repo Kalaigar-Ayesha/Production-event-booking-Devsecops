@@ -25,12 +25,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            Eventora-MERN/package-lock.json
-            Eventora-MERN/server/package-lock.json
-            Eventora-MERN/client/package-lock.json
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       - name: Install root deps (if lockfile exists)
-        working-directory: Eventora-MERN
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -39,7 +38,7 @@ jobs:
           fi
 
       - name: Install server deps
-        working-directory: Eventora-MERN/server
+        working-directory: server
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -48,11 +47,11 @@ jobs:
           fi
 
       - name: Server tests (if present)
-        working-directory: Eventora-MERN/server
+        working-directory: server
         run: npm test --if-present
 
       - name: Install client deps
-        working-directory: Eventora-MERN/client
+        working-directory: client
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -61,11 +60,11 @@ jobs:
           fi
 
       - name: Client lint (if present)
-        working-directory: Eventora-MERN/client
+        working-directory: client
         run: npm run lint --if-present
 
       - name: Client build (if present)
-        working-directory: Eventora-MERN/client
+        working-directory: client
         run: npm run build --if-present
 
   codeql:
@@ -86,7 +85,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
 
-      # JS/TS typically doesn't need a build step for CodeQL.
       - uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
@@ -98,10 +96,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Scans repo for:
-      # - OS/package vulns where lockfiles exist (npm)
-      # - IaC misconfigurations (Dockerfile, docker-compose)
-      # - hardcoded secrets (built-in secret rules)
       - name: Trivy filesystem scan (gate)
         uses: aquasecurity/trivy-action@0.30.0
         with:

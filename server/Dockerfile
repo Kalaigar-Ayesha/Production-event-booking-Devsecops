@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 # Minimal runtime: production deps only, non-root, pinned major Node Alpine
-FROM node:22-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-FROM node:22-alpine AS runner
+FROM node:25-alpine AS runner
 ENV NODE_ENV=production
 # Dedicated system user/group (no shell login)
 RUN addgroup -g 1001 -S nodejs && adduser -S -u 1001 -G nodejs nodejs

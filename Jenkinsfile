@@ -4,29 +4,22 @@ pipeline {
   options {
     timestamps()
     ansiColor('xterm')
-    skipDefaultCheckout(false)
   }
 
   parameters {
     choice(name: 'PUSH_TARGET', choices: ['dockerhub', 'none'], description: 'Where to push images')
-    string(name: 'DOCKER_IMAGE_NAMESPACE', defaultValue: 'your-dockerhub-user', description: 'Docker Hub namespace/user')
-    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Image tag (e.g. build number, git sha)')
+    string(name: 'DOCKER_IMAGE_NAMESPACE', defaultValue: 'your-dockerhub-user', description: 'Docker Hub username')
+    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Image tag')
   }
 
   environment {
-    // SonarQube (optional): set these in Jenkins Credentials/Env to enable SAST stage
-    SONAR_HOST_URL = "${env.SONAR_HOST_URL}"
-    SONAR_TOKEN    = "${env.SONAR_TOKEN}"
-
-    // Image names (we publish two: API and Web)
     API_IMAGE = "${params.DOCKER_IMAGE_NAMESPACE}/eventora-api:${params.IMAGE_TAG}"
     WEB_IMAGE = "${params.DOCKER_IMAGE_NAMESPACE}/eventora-web:${params.IMAGE_TAG}"
-
-    // Security gate severity
     TRIVY_SEVERITY = 'HIGH,CRITICAL'
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
@@ -38,7 +31,7 @@ pipeline {
         script {
           if (isUnix()) {
             sh '''
-              set -euo pipefail
+              set -e
               npm ci
               npm run build
             '''
@@ -52,40 +45,36 @@ pipeline {
       }
     }
 
-    stage('SAST (Code Security)') {
-      when {
-        expression { return env.SONAR_HOST_URL?.trim() && env.SONAR_TOKEN?.trim() }
-      }
+    // ✅ FIXED SONARQUBE STAGE
+    stage('SAST (SonarQube)') {
       steps {
-        script {
-          def scannerCmd = """
-            docker run --rm \
-              -e SONAR_HOST_URL="${env.SONAR_HOST_URL}" \
-              -e SONAR_LOGIN="${env.SONAR_TOKEN}" \
-              -v "${pwd()}:/usr/src" \
-              sonarsource/sonar-scanner-cli:latest
-          """.trim()
-
-          if (isUnix()) {
-            sh """
-              set -euo pipefail
-              ${scannerCmd}
-            """
-          } else {
-            // Windows Docker Desktop supports volume mounts via absolute path; pwd() is absolute in Jenkins
-            bat "${scannerCmd}"
+        withSonarQubeEnv('SonarQube') {
+          script {
+            if (isUnix()) {
+              sh '''
+                docker run --rm \
+                  -v "$PWD:/usr/src" \
+                  sonarsource/sonar-scanner-cli:latest \
+                  -Dsonar.projectKey=eventora
+              '''
+            } else {
+              bat '''
+                docker run --rm ^
+                  -v "%cd%:/usr/src" ^
+                  sonarsource/sonar-scanner-cli:latest ^
+                  -Dsonar.projectKey=eventora
+              '''
+            }
           }
         }
       }
     }
 
-    stage('Dependency Scan') {
+    stage('Dependency Scan (npm audit)') {
       steps {
         script {
           if (isUnix()) {
             sh '''
-              set -euo pipefail
-              # npm audit (fails build on high/critical)
               npm audit --audit-level=high
               (cd client && npm audit --audit-level=high)
               (cd server && npm audit --audit-level=high)
@@ -97,47 +86,53 @@ pipeline {
               cd server && npm audit --audit-level=high && cd ..
             '''
           }
+        }
+      }
+    }
 
-          // Trivy filesystem scan (repo-level)
-          def trivyFsCmd = """
-            docker run --rm \
-              -v "${pwd()}:/workspace" \
-              aquasec/trivy:latest fs /workspace \
-              --security-checks vuln,config,secret \
-              --severity ${env.TRIVY_SEVERITY} \
-              --exit-code 1 \
-              --no-progress
-          """.trim()
-
+    stage('Filesystem Scan (Trivy)') {
+      steps {
+        script {
           if (isUnix()) {
-            sh """
-              set -euo pipefail
-              ${trivyFsCmd}
-            """
+            sh '''
+              docker run --rm \
+                -v "$PWD:/workspace" \
+                aquasec/trivy:latest fs /workspace \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                --no-progress
+            '''
           } else {
-            bat "${trivyFsCmd}"
+            bat '''
+              docker run --rm ^
+                -v "%cd%:/workspace" ^
+                aquasec/trivy:latest fs /workspace ^
+                --severity HIGH,CRITICAL ^
+                --exit-code 1 ^
+                --no-progress
+            '''
           }
         }
       }
     }
 
-    stage('Secret Detection (Gitleaks)') {
+    stage('Secret Scan (Gitleaks)') {
       steps {
         script {
-          def gitleaksCmd = """
-            docker run --rm \
-              -v "${pwd()}:/repo" \
-              zricethezav/gitleaks:latest \
-              detect --source=/repo --redact --verbose --exit-code 1
-          """.trim()
-
           if (isUnix()) {
-            sh """
-              set -euo pipefail
-              ${gitleaksCmd}
-            """
+            sh '''
+              docker run --rm \
+                -v "$PWD:/repo" \
+                zricethezav/gitleaks:latest \
+                detect --source=/repo --redact --verbose --exit-code 1
+            '''
           } else {
-            bat "${gitleaksCmd}"
+            bat '''
+              docker run --rm ^
+                -v "%cd%:/repo" ^
+                zricethezav/gitleaks:latest ^
+                detect --source=/repo --redact --verbose --exit-code 1
+            '''
           }
         }
       }
@@ -147,16 +142,15 @@ pipeline {
       steps {
         script {
           if (isUnix()) {
-            sh """
-              set -euo pipefail
-              docker build -t "${env.API_IMAGE}" ./server
-              docker build -t "${env.WEB_IMAGE}" ./client
-            """
+            sh '''
+              docker build -t $API_IMAGE ./server
+              docker build -t $WEB_IMAGE ./client
+            '''
           } else {
-            bat """
-              docker build -t "${env.API_IMAGE}" .\\server
-              docker build -t "${env.WEB_IMAGE}" .\\client
-            """
+            bat '''
+              docker build -t %API_IMAGE% .\\server
+              docker build -t %WEB_IMAGE% .\\client
+            '''
           }
         }
       }
@@ -165,54 +159,45 @@ pipeline {
     stage('Image Scan (Trivy)') {
       steps {
         script {
-          def scan = { img ->
-            def cmd = """
-              docker run --rm \
-                -v /var/run/docker.sock:/var/run/docker.sock \
-                aquasec/trivy:latest image "${img}" \
-                --severity ${env.TRIVY_SEVERITY} \
-                --exit-code 1 \
-                --no-progress
-            """.trim()
+          def scanCmdUnix = '''
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:latest image IMAGE_NAME \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              --no-progress
+          '''
 
-            if (isUnix()) {
-              sh """
-                set -euo pipefail
-                ${cmd}
-              """
-            } else {
-              // On Windows agents this usually requires a Linux Docker engine exposing /var/run/docker.sock;
-              // prefer running this pipeline on a Linux Docker-capable agent.
-              bat "${cmd}"
-            }
+          if (isUnix()) {
+            sh scanCmdUnix.replace("IMAGE_NAME", env.API_IMAGE)
+            sh scanCmdUnix.replace("IMAGE_NAME", env.WEB_IMAGE)
+          } else {
+            bat scanCmdUnix.replace("IMAGE_NAME", "%API_IMAGE%")
+            bat scanCmdUnix.replace("IMAGE_NAME", "%WEB_IMAGE%")
           }
-
-          scan(env.API_IMAGE)
-          scan(env.WEB_IMAGE)
         }
       }
     }
 
-    stage('Push Image') {
+    stage('Push to DockerHub') {
       when {
         expression { return params.PUSH_TARGET == 'dockerhub' }
       }
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
           script {
             if (isUnix()) {
-              sh """
-                set -euo pipefail
-                echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
-                docker push "${env.API_IMAGE}"
-                docker push "${env.WEB_IMAGE}"
-              """
+              sh '''
+                echo "$PASS" | docker login -u "$USER" --password-stdin
+                docker push $API_IMAGE
+                docker push $WEB_IMAGE
+              '''
             } else {
-              bat """
-                echo %DOCKERHUB_PASS% | docker login -u %DOCKERHUB_USER% --password-stdin
-                docker push "${env.API_IMAGE}"
-                docker push "${env.WEB_IMAGE}"
-              """
+              bat '''
+                echo %PASS% | docker login -u %USER% --password-stdin
+                docker push %API_IMAGE%
+                docker push %WEB_IMAGE%
+              '''
             }
           }
         }

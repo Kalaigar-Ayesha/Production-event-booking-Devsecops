@@ -196,6 +196,34 @@ pipeline {
       }
     }
 
+    stage('DAST (OWASP ZAP)') {
+      steps {
+        sh '''
+          set -e
+          mkdir -p reports/zap
+
+          # Start the app stack (nginx is the single entrypoint on :80)
+          docker compose up -d --build
+
+          # Give services a moment to come up
+          sleep 10
+
+          # Baseline scan against running app
+          docker run --rm --network host \
+            -v "$PWD/reports/zap:/zap/wrk:rw" \
+            -v "$PWD/zap/zap-baseline.conf:/zap/wrk/zap-baseline.conf:ro" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://127.0.0.1/ -r zap-report.html -x zap-report.xml -J zap-report.json -c zap-baseline.conf
+        '''
+        archiveArtifacts artifacts: 'reports/zap/*', fingerprint: true
+      }
+      post {
+        always {
+          sh 'docker compose down -v || true'
+        }
+      }
+    }
+
     stage('Push to DockerHub') {
       when {
         expression { params.PUSH_TARGET == 'dockerhub' }

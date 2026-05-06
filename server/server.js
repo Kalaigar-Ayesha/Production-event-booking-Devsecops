@@ -4,6 +4,14 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+
+const {
+  client: promClient,
+  httpRequestDurationSeconds,
+} = require('./observability/metrics');
 
 // Load repo-root .env first, then server/.env (override: true so server/.env wins over root).
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -35,8 +43,47 @@ const bookingRoutes = require('./routes/bookings');
 const app = express();
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+
+app.use(helmet());
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+app.use(express.json({ limit: '1mb' }));
+app.use(morgan('combined'));
+
+// Basic rate limiting (global)
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+  })
+);
+
+// Prometheus metrics endpoint (lock down at ingress / network level)
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(await promClient.register.metrics());
+});
+
+// Request duration metrics
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const route = req.route?.path || req.path || 'unknown';
+    const durationSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+    httpRequestDurationSeconds
+      .labels(req.method, route, String(res.statusCode))
+      .observe(durationSeconds);
+  });
+  next();
+});
 
 // Liveness for orchestrators / Docker HEALTHCHECK (no DB dependency)
 app.get('/health', (_req, res) => {

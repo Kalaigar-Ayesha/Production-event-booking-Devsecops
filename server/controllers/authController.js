@@ -4,6 +4,7 @@ const OTP = require('../models/OTP');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { sendOTPEmail } = require('../utils/email');
+const { authFailedLoginTotal } = require('../observability/metrics');
 
 const dbUnavailable = (res) => {
     if (mongoose.connection.readyState === 1) return false;
@@ -56,16 +57,23 @@ exports.login = async (req, res) => {
         if (dbUnavailable(res)) return;
         const { email, password } = req.body;
         const user = await User.findOne({ email });
-        if (!user) return res.status(400).json({ message: 'Invalid credentials' });
+        if (!user) {
+            authFailedLoginTotal.labels('user_not_found').inc();
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
 
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
+        if (!isMatch) {
+            authFailedLoginTotal.labels('bad_password').inc();
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
 
         if (!user.isVerified && user.role !== 'admin') {
             const otp = generateOTP();
             await OTP.findOneAndDelete({ email: user.email, action: 'account_verification' });
             await OTP.create({ email: user.email, otp, action: 'account_verification' });
             await sendOTPEmail(user.email, otp, 'account_verification');
+            authFailedLoginTotal.labels('not_verified').inc();
             return res.status(403).json({ message: 'Account not verified', needsVerification: true, email: user.email });
         }
 

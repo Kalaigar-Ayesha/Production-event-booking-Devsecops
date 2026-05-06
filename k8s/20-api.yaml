@@ -97,6 +97,9 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           livenessProbe:
             httpGet:
               path: /health
@@ -113,3 +116,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}

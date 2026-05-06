@@ -217,5 +217,19 @@ pipeline {
       sh 'docker logout || true'
       cleanWs()
     }
+    success {
+      sh '''
+        if [ -n "${PUSHGATEWAY_URL:-}" ]; then
+          echo "jenkins_job_last_result{job=\\"eventora\\"} 1" | curl --silent --show-error --fail --data-binary @- "$PUSHGATEWAY_URL/metrics/job/eventora" || true
+        fi
+      '''
+    }
+    failure {
+      sh '''
+        if [ -n "${PUSHGATEWAY_URL:-}" ]; then
+          echo "jenkins_job_last_result{job=\\"eventora\\"} 0" | curl --silent --show-error --fail --data-binary @- "$PUSHGATEWAY_URL/metrics/job/eventora" || true
+        fi
+      '''
+    }
   }
 }

@@ -1,0 +1,71 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: eventora-alerts
+    folder: Eventora
+    interval: 1m
+    rules:
+      - uid: eventora-high-cpu
+        title: High CPU usage
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100) > 85"
+              intervalMs: 1000
+              maxDataPoints: 43200
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Host CPU above 85% for 5m"
+        labels:
+          severity: critical
+
+      - uid: eventora-suspicious-traffic
+        title: Suspicious traffic (4xx/5xx spike)
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: "sum(rate(eventora_http_request_duration_seconds_count{status_code=~\"4..|5..\"}[1m])) > 30"
+              intervalMs: 1000
+              maxDataPoints: 43200
+        noDataState: NoData
+        execErrState: Error
+        for: 3m
+        annotations:
+          summary: "High 4xx/5xx rate detected"
+        labels:
+          severity: warning
+
+      - uid: eventora-failed-deployments
+        title: Failed deployments (Pushgateway)
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: "max(jenkins_job_last_result{job=\"eventora\"}) == 0"
+              intervalMs: 1000
+              maxDataPoints: 43200
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        annotations:
+          summary: "Jenkins reports failed deployment"
+        labels:
+          severity: critical
+

@@ -1,19 +1,32 @@
-# Eventora stack: MongoDB + API + static frontend
-# Practices: non-root images, healthchecks, no secrets in compose (use .env file)
+# Eventora stack: MongoDB (authenticated) + API + static frontend
+#
+# Before first run: copy .env.example to .env and set MONGO_ROOT_* and JWT_SECRET.
+# If you previously used Mongo without auth, reset data once:
+#   docker compose down -v
+#
+# MONGO_URI is built from the same credentials as MONGO_INITDB_*.
+# Use a password without URI-reserved characters (: @ / ? #) or percent-encode them.
 services:
   mongo:
     image: mongo:7.0
     restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
     volumes:
       - mongo_data:/data/db
     networks:
-      - internal
+      - db_private
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep -qx 1
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 40s
 
   api:
     build:
@@ -21,38 +34,54 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      # Compose project `.env` supplies JWT_SECRET / email; MONGO_URI targets the compose network
-      MONGO_URI: mongodb://mongo:27017/eventora
-      JWT_SECRET: ${JWT_SECRET:-docker-dev-only-change-me}
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/eventora?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       EMAIL_USER: ${EMAIL_USER:-}
       EMAIL_PASS: ${EMAIL_PASS:-}
       DNS_SERVERS: ${DNS_SERVERS:-}
       USE_SYSTEM_DNS: ${USE_SYSTEM_DNS:-}
-    ports:
-      - "5000:5000"
     depends_on:
       mongo:
         condition: service_healthy
     networks:
-      - internal
+      - app_private
+      - db_private
 
   web:
     build:
       context: ./client
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: http://localhost:5000/api
+        VITE_API_BASE_URL: /api
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     depends_on:
       - api
     networks:
-      - internal
+      - app_private
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+      - api
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - public
+      - app_private
 
 volumes:
   mongo_data:
 
 networks:
-  internal:
+  public:
     driver: bridge
+  app_private:
+    driver: bridge
+    internal: true
+  db_private:
+    driver: bridge
+    internal: true

@@ -14,6 +14,15 @@ spec:
       targetPort: 5000
   type: ClusterIP
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eventora-api
+  namespace: eventora
+  labels:
+    app: api
+automountServiceAccountToken: true
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,6 +38,7 @@ spec:
       labels:
         app: api
     spec:
+      serviceAccountName: eventora-api
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -75,16 +85,6 @@ spec:
                 secretKeyRef:
                   name: eventora-secrets
                   key: MONGO_URI
-            - name: MONGO_ROOT_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: eventora-secrets
-                  key: MONGO_ROOT_USERNAME
-            - name: MONGO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: eventora-secrets
-                  key: MONGO_ROOT_PASSWORD
           resources:
             requests:
               cpu: "100m"

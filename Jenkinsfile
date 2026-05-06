@@ -11,6 +11,7 @@ pipeline {
     string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Image tag')
     choice(name: 'SAST_TOOL', choices: ['sonarqube', 'codeql'], description: 'SAST scanner to run')
     choice(name: 'DEPENDENCY_SCAN_TOOL', choices: ['snyk', 'owasp'], description: 'Dependency scanner to run')
+    booleanParam(name: 'USE_VAULT', defaultValue: true, description: 'Fetch CI tokens from HashiCorp Vault (recommended)')
   }
 
   environment {
@@ -24,6 +25,37 @@ pipeline {
     stage('Checkout') {
       steps {
         checkout scm
+      }
+    }
+
+    stage('Secrets (Vault)') {
+      when {
+        expression { return params.USE_VAULT == true }
+      }
+      steps {
+        script {
+          // Requires Jenkins "HashiCorp Vault" plugin.
+          // Vault access should use AppRole / Kubernetes auth, not static tokens committed in code.
+          // Configure the Vault server in Jenkins global settings and a Vault credential:
+          // - Credential ID: vault-approle (type: Vault App Role Credential)
+          //
+          // Secrets path examples:
+          // - secret/ci/eventora : { snyk_token: "...", sonar_token: "..." }
+          def secrets = [
+            [path: 'secret/ci/eventora', secretValues: [
+              [envVar: 'SNYK_TOKEN', vaultKey: 'snyk_token'],
+              [envVar: 'SONAR_AUTH_TOKEN', vaultKey: 'sonar_token']
+            ]]
+          ]
+
+          withVault([
+            vaultSecrets: secrets,
+            vaultCredentialId: 'vault-approle'
+          ]) {
+            // Values are now in env for subsequent stages; do a minimal sanity check without printing secrets.
+            sh 'test -n "$SNYK_TOKEN" || true'
+          }
+        }
       }
     }
 
@@ -79,7 +111,9 @@ pipeline {
       steps {
         script {
           if (params.DEPENDENCY_SCAN_TOOL == 'snyk') {
-            withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
+            // Prefer Vault-sourced SNYK_TOKEN; fallback to Jenkins credential if Vault stage disabled.
+            def haveVaultToken = env.SNYK_TOKEN?.trim()
+            if (haveVaultToken) {
               sh '''
                 docker run --rm \
                   -e SNYK_TOKEN="$SNYK_TOKEN" \
@@ -89,6 +123,18 @@ pipeline {
                     snyk test --severity-threshold=high --all-projects
                   "
               '''
+            } else {
+              withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
+                sh '''
+                  docker run --rm \
+                    -e SNYK_TOKEN="$SNYK_TOKEN" \
+                    -v "$PWD:/project" \
+                    snyk/snyk-cli:latest sh -lc "
+                      cd /project &&
+                      snyk test --severity-threshold=high --all-projects
+                    "
+                '''
+              }
             }
           } else {
             sh '''

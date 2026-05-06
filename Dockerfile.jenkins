@@ -1,8 +1,11 @@
+# syntax=docker/dockerfile:1
+# Jenkins controller with Docker CLI. Do not embed secrets; use Jenkins credentials / vault.
 FROM jenkins/jenkins:lts
 
 USER root
 
-# Install Docker CLI
-RUN apt-get update && apt-get install -y docker.io
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends docker.io \
+    && rm -rf /var/lib/apt/lists/*
 
 USER jenkins
